@@ -1,7 +1,7 @@
 {
   "name": "dev-log-reader",
   "version": "1.0.0",
-  "description": "",
+  "description": "The development log reader",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -9,8 +9,8 @@
   "bin": {
     "dlr": "./bin/reader.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "techird@qq.com",
+  "license": "MIT",
   "dependencies": {
     "@types/node": "^8.0.33",
     "ws": "^3.2.0"
