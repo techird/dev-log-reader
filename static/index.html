@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>日志阅读</title>
+  <style>
+    html, body {
+      background: #141f1f;
+      font-family: courier-new,courier,monospace;
+    }
+    #root {
+      margin-right: 300px;
+    }
+    #panel {
+      width: 300px;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+    }
+    #panel fieldset {
+      margin: 10px;
+      border: 1px solid #0ba9b9;
+      padding: 0;
+      font-size: 0;
+    }
+    #panel fieldset legend {
+      font-size: 12px;
+      color: #0ba9b9;
+      margin-left: 10px;
+    }
+    #panel fieldset #info {
+      color: #0ba9b9;
+      font-size: 12px;
+      margin: 10px;
+      margin-bottom: 0;
+    }
+    #panel fieldset button {
+      margin: 10px 0 10px 10px;
+      padding: 5px 10px;
+      display: inline-block;
+      color: #0ba9b9;
+      border: 1px solid #0ba9b9;
+      opacity: 0.5;
+      background: transparent;
+      cursor: pointer;
+      outline: none;
+      transition: all ease .1s;
+    }
+    #panel fieldset button:hover {
+      opacity: 1;
+    }
+    #panel fieldset textarea {
+      width: 100%;
+      outline: none;
+      resize: vertical;
+      min-height: 40px;
+      font-family: SFMono-Regular;
+      background: transparent;
+      border: none;
+      padding: 10px;
+      color: #0ba9b9;
+      box-sizing: border-box;
+    }
+    #panel fieldset textarea::-webkit-input-placeholder {
+      color: #0ba9b9;
+      opacity: 0.4;
+    }
+    p {
+      margin: 0;
+      padding: 5px 0;
+      color: #CCC;
+      font-size: 12px;
+      border-bottom: 1px dashed #666;
+      word-break: break-all;
+    }
+    .keyword {
+      background: yellow;
+      color: darkred;
+    }
+    .time {
+      color: #777;
+    }
+    .type {
+      display: inline-block;
+      padding: 0 3px;
+      margin: 0 3px;
+      border-radius: 2px;
+    }
+    .type.INFO {
+      background: rgb(14, 104, 77);
+    }
+    .type.DEBUG {
+      background: rgb(31, 95, 121);
+    }
+    .type.ERROR {
+      background: rgb(107, 35, 35);
+    }
+    .path {
+      color: #777;
+    }
+    .json {
+      color: rgb(194, 171, 152);
+      cursor: pointer;
+    }
+    .json:hover {
+      background: rgb(87, 63, 11);
+    }
+    .json-formatted {
+      background: #192322;
+      padding: 4px;
+      border-radius: 2px;
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div id="panel">
+  <fieldset>
+    <legend>概览</legend>
+    <div id="info">正在显示 0/0 条日志</div>
+    <button onclick="location.reload()">清空</button>
+    <button onclick="scollToBottom()">回到底部</button>
+  </fieldset>
+  <fieldset>
+    <legend>包含</legend>
+    <textarea id="includes" placeholder="筛选日志要包含的内容或正则，每行一个。正则以 JS 字面量格式输入（如 /\w+/）" oninput="handleTextAreaInput(this)"></textarea>
+  </fieldset>
+  <fieldset>
+    <legend>排除</legend>
+    <textarea id="excludes" placeholder="筛选日志要排除的内容或正则，每行一个。正则以 JS 字面量格式输入（如 /\w+/）" oninput="handleTextAreaInput(this)"></textarea>
+  </fieldset>
+</div>
+<script>
+  const root = document.getElementById('root');
+  const includeInput = document.getElementById('includes');
+  const excludeInput = document.getElementById('excludes');
+  const MAX_MESSAGE_COUNT = 10000;
+  const messages = [];
+  let nextMessageId = 0;
+  /** @type {WebSocket} */
+  let ws, connected;
+
+  document.body.onclick = e => handleJsonClick(e.target);
+  loadValue(includeInput);
+  loadValue(excludeInput);
+  connect();
+  requestAnimationFrame(autoRender);
+
+  function connect() {
+    appendMessage('[INFO] WebSocket connecting...');
+    ws = new WebSocket('ws://' + location.host);
+    install();
+    function install() {
+      ws.addEventListener('open', open);
+      ws.addEventListener('close', close);
+      ws.addEventListener('error', error);
+      ws.addEventListener('message', message);
+    }
+    function uninstall() {
+      ws.removeEventListener('open', open);
+      ws.removeEventListener('close', close);
+      ws.removeEventListener('error', error);
+      ws.removeEventListener('message', message);
+    };
+    function reconnect() {
+      uninstall();
+      setTimeout(connect, 1000);
+    }
+    function open() {
+      connected = true;
+      appendMessage('[INFO] WebSocket connected!');
+    }
+    function close() {
+      connected = false;
+      appendMessage('[INFO] WebSocket closed! Trying to reconnect in 1 sec.');
+      reconnect();
+    }
+    function error() {
+      connected = false;
+      appendMessage('[ERROR] WebSocket error! Trying to reconnect in 1 sec.');
+      reconnect();
+    }
+    function message(e) {
+      appendMessage(e.data)
+    }
+  };
+
+  function appendMessage(content) {
+    const id = nextMessageId++;
+    const element = document.createElement('p');
+    element.setAttribute('data-message-id', id);
+    element.className = 'message';
+    messages.push({
+      id,
+      content,
+      element,
+    });
+    const shouldScroll = isScrollOnBottom();
+    while (messages.length > MAX_MESSAGE_COUNT) {
+      messages.unshift();
+    }
+    render();
+    if (shouldScroll) {
+      scollToBottom();
+    }
+  }
+
+  function autoRender() {
+    render();
+    requestAnimationFrame(autoRender);
+  }
+
+  function render() {
+    const existElements = root.querySelectorAll('p.message');
+    const visibleMessages = withConditions();
+    let i = 0; j = 0;
+    while (i < existElements.length || j < visibleMessages.length) {
+      const element = existElements[i];
+      const message = visibleMessages[j];
+      const eid = element ? +element.getAttribute('data-message-id') : Infinity;
+      const mid = message ? message.id : Infinity;
+      if (eid === mid) {
+        i++;
+        j++;
+      }
+      else if (eid < mid) {
+        root.removeChild(element);
+        i++;
+      }
+      else if (eid > mid) {
+        root.insertBefore(message.element, element);
+        j++;
+      }
+    }
+    const percent = `${visibleMessages.length}/${messages.length}`;
+    document.getElementById('info').innerText = `正在显示 ${percent} 条日志`;
+    document.title = `(${percent}) - 日志阅读`;
+  }
+
+  function renderMessage(message) {
+    if (typeof message.lastKeywords !== 'undefined' && String(message.keywords) === String(message.lastKeywords)) {
+      return message;
+    } else {
+      message.lastKeywords = message.keywords;
+    }
+    const keywords = message.keywords;
+    let content = message.content;
+    let html = content;
+    // 实体转换
+    html = html.replace(/\</g, '&lt;');
+    html = html.replace(/\>/g, '&gt;');
+    html = html.replace(/\n/g, '<br/>');
+    // 关键字高亮
+    if (keywords && keywords.length) {
+      for (let keyword of keywords) {
+        html = html.replace(new RegExp(keyword, 'ig'), '<span class="keyword">$&</span>');
+      }
+    }
+    // 过滤颜色指令
+    html = html.replace(/\u001b\[\d+m/g, '');
+    // 识别日期
+    html = html.replace(/(\[\d{4}\-\d{2}\-\d{2}\s\d{2}\:\d{2}\:\d{2}\])/g, '<span class="time">$1</span>');
+    // 识别类型
+    html = html.replace(/\[(DEBUG|INFO|WARN|ERROR)\]/g, '<span class="type $1">$1</span>');
+    // 识别路径
+    html = html.replace(/(\[([\w\/\-\_\d\.]+)\:(\d+?)\])/g, '<span class="path">$1</span>');
+
+    // 识别 JSON
+    let start = 0, end = 0, depth = 0;
+    for (let i = 0; i < html.length; i++) {
+      const char = html[i];
+      switch (char) {
+        case '{':
+          if (!depth) {
+            start = i;
+          }
+          depth++;
+          break;
+        case '}':
+          depth--;
+          if (!depth) {
+            end = i;
+          }
+          break;
+      }
+      if (end) break;
+    }
+    if (end) {
+      html = html.substr(0, start)
+        + '<a class="json">'
+        + html.substr(start, end - start + 1)
+        + '</a>'
+        + html.substr(end + 1);
+    }
+
+    message.element.innerHTML = html;
+    return message;
+  }
+
+  function withConditions() {
+    const getValidLines = str => String(str).split(/\r?\n/g).filter(line => /\S/.test(line));
+    const evalRegex = input => (input.classList.remove('error'), line => {
+      if (line[0] === '/' && line[line.length - 1] === '/') {
+        try {
+          line = eval(line);
+        }
+        catch (err) {
+          input.classList.add('error');
+        }
+      }
+      return line;
+    });
+    const includes = getValidLines(includeInput.value).map(evalRegex(includeInput));
+    const excludes = getValidLines(excludeInput.value).map(evalRegex(excludeInput));
+    const match = (condition, content) => condition instanceof RegExp ?
+      condition.test(content) :
+      content.indexOf(condition) > -1;
+
+    return messages.filter(message => {
+      const content = message.content;
+      message.keywords = null;
+      if (includes.length) {
+        for (let include of includes) {
+          if (!match(include, content)) return false;
+        }
+        message.keywords = includes;
+      }
+      if (excludes.length) {
+        for (let exclude of excludes) {
+          if (match(exclude, content)) return false;
+        }
+      }
+      return true;
+    }).map(renderMessage);
+  }
+
+  function isScrollOnBottom() {
+    const scrolling = document.documentElement;
+    return scrolling.scrollHeight - scrolling.clientHeight - scrolling.scrollTop < 100;
+  }
+
+  function scollToBottom() {
+    const scrolling = document.documentElement;
+    scrolling.scrollTop = scrolling.scrollHeight;
+  }
+
+  function handleJsonClick(target) {
+    if (target.tagName.toLowerCase() === 'a' && target.classList.contains('json')) {
+      /** @type {HTMLAnchorElement} */
+      const node = target;
+      const pre = document.createElement('pre');
+      const json = JSON.parse(node.innerText);
+      console.info(json);
+      pre.innerText = JSON.stringify(json, null, 4);
+      pre.classList.add('json-formatted');
+      pre.contentEditable = true;
+      node.parentElement.replaceChild(pre, node);
+      pre.focus();
+      document.execCommand('selectAll', false, null);
+    }
+  }
+
+  function handleTextAreaInput(textField) {
+    saveValue(textField);
+    if (textField.clientHeight < textField.scrollHeight) {
+      textField.style.height = textField.scrollHeight + "px";
+      if (textField.clientHeight < textField.scrollHeight) {
+        textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+      }
+    }
+  }
+
+  function saveValue(textField) {
+    localStorage.setItem('textarea-' + textField.id, textField.value);
+  }
+  function loadValue(textField) {
+    textField.value = localStorage.getItem('textarea-' + textField.id);
+  }
+</script>
+</body>
+</html>
