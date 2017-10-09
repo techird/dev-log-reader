@@ -18,5 +18,11 @@ npm install dev-log-reader --global
 ## 使用
 
 ``` 
-dlr -p 1234 -t QC_MAIN
+dlr [-p,--port=number] [-t,--title=title] -- command
+```
+
+如：
+
+```
+dlr -p 12345 -t MY_PROJECT -- yarn dev
 ```
