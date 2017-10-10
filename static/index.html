@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
   <title>日志阅读</title>
   <style>
     html, body {
@@ -40,14 +41,17 @@
       display: inline-block;
       color: #0ba9b9;
       border: 1px solid #0ba9b9;
-      opacity: 0.5;
       background: transparent;
       cursor: pointer;
       outline: none;
-      transition: all ease .1s;
+      transition: background ease .15s, color ease .15s;
     }
     #panel fieldset button:hover {
-      opacity: 1;
+      background: #0ba9b9;
+      color: #152d30;
+    }
+    #panel fieldset button:active {
+      transform: translate(1px, 1px);
     }
     #panel fieldset textarea {
       width: 100%;
@@ -94,6 +98,9 @@
     }
     .type.ERROR {
       background: rgb(107, 35, 35);
+    }
+    .type.SYSTEM {
+      background: rgb(80, 14, 80);
     }
     .path {
       color: #777;
@@ -144,11 +151,13 @@
   document.body.onclick = e => handleJsonClick(e.target);
   loadValue(includeInput);
   loadValue(excludeInput);
+  autoGrow(includeInput);
+  autoGrow(excludeInput);
   connect();
   requestAnimationFrame(autoRender);
 
   function connect() {
-    appendMessage('[INFO] WebSocket connecting...');
+    appendMessage('[INFO] WebSocket connecting...', true);
     ws = new WebSocket('ws://' + location.host);
     install();
     function install() {
@@ -169,16 +178,16 @@
     }
     function open() {
       connected = true;
-      appendMessage('[INFO] WebSocket connected!');
+      appendMessage('[INFO] WebSocket connected!', true);
     }
     function close() {
       connected = false;
-      appendMessage('[INFO] WebSocket closed! Trying to reconnect in 1 sec.');
+      appendMessage('[INFO] WebSocket closed! Trying to reconnect in 1 sec.', true);
       reconnect();
     }
     function error() {
       connected = false;
-      appendMessage('[ERROR] WebSocket error! Trying to reconnect in 1 sec.');
+      appendMessage('[ERROR] WebSocket error! Trying to reconnect in 1 sec.', true);
       reconnect();
     }
     function message(e) {
@@ -186,7 +195,7 @@
     }
   };
 
-  function appendMessage(content) {
+  function appendMessage(content, system = false) {
     const id = nextMessageId++;
     const element = document.createElement('p');
     element.setAttribute('data-message-id', id);
@@ -195,6 +204,7 @@
       id,
       content,
       element,
+      system,
     });
     const shouldScroll = isScrollOnBottom();
     while (messages.length > MAX_MESSAGE_COUNT) {
@@ -247,6 +257,7 @@
     const keywords = message.keywords;
     let content = message.content;
     let html = content;
+
     // 实体转换
     html = html.replace(/\</g, '&lt;');
     html = html.replace(/\>/g, '&gt;');
@@ -294,6 +305,11 @@
         + html.substr(end + 1);
     }
 
+    // 系统消息
+    if (message.system) {
+      html = '<span class="type SYSTEM">SYSTEM</span>' + html;
+    }
+
     message.element.innerHTML = html;
     return message;
   }
@@ -318,6 +334,7 @@
       content.indexOf(condition) > -1;
 
     return messages.filter(message => {
+      if (message.system) return true;
       const content = message.content;
       message.keywords = null;
       if (includes.length) {
@@ -363,6 +380,10 @@
 
   function handleTextAreaInput(textField) {
     saveValue(textField);
+    autoGrow(textField);
+  }
+
+  function autoGrow(textField) {
     if (textField.clientHeight < textField.scrollHeight) {
       textField.style.height = textField.scrollHeight + "px";
       if (textField.clientHeight < textField.scrollHeight) {
